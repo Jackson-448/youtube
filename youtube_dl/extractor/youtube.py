@@ -8,6 +8,7 @@ import os.path
 import random
 import re
 import traceback
+import importlib
 
 from .common import InfoExtractor, SearchInfoExtractor
 from ..compat import (
@@ -18,6 +19,7 @@ from ..compat import (
     compat_urllib_parse,
     compat_urllib_parse_parse_qs as compat_parse_qs,
     compat_urllib_parse_unquote_plus,
+    compat_urllib_quote,
     compat_urllib_parse_urlparse,
     compat_zip as zip,
 )
@@ -1465,6 +1467,11 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         super(YoutubeIE, self).__init__(*args, **kwargs)
         self._code_cache = {}
         self._player_cache = {}
+        self._webdriver = None
+
+    def __del__(self):
+        if self._webdriver is not None:
+            self._webdriver.quit()
 
     def _signature_cache_id(self, example_sig):
         """ Return a string representation of a signature """
@@ -1658,6 +1665,58 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
 
         return lambda s: jsi.extract_function_from_code(*func_code)([s])
 
+    def _call_n_function_with_webdriver(self, webdriver_type, jscode, n_param):
+        if self._webdriver is None:
+            wd = importlib.import_module('selenium.webdriver')
+            if webdriver_type == 'firefox':  # geckodriver
+                o = wd.FirefoxOptions()
+                o.headless = True
+                s = wd.firefox.service.Service(log_path=os.path.devnull)
+                self._webdriver = wd.Firefox(options=o, service=s)
+            elif webdriver_type == 'chrome':  # chromedriver
+                o = wd.ChromeOptions()
+                o.headless = True
+                """
+                If you are using the snap version of the chromium, chromedriver is included in the snap package.
+                You should use that driver.
+                $ cd /snap/bin && sudo ln -s -T chromium.chromedriver chromedriver
+                or
+                s = wd.chrome.service.Service(executable_path='chromium.chromedriver')
+                self._webdriver = wd.Chrome(options=o, service=s)
+                """
+                self._webdriver = wd.Chrome(options=o)
+            elif webdriver_type == 'edge':  # msedgedriver
+                o = wd.EdgeOptions()
+                o.headless = True
+                self._webdriver = wd.Edge(options=o)
+            elif webdriver_type == 'safari':  # safaridriver
+                """
+                safaridriver does not have headless-mode. :(
+                But macOS includes safaridriver by default.
+                To enable automation on safaridriver, run the following command once from the admin terminal.
+                # safaridriver --enable
+                """
+                self._webdriver = wd.Safari()
+            else:
+                raise ExtractorError('unsupported webdriver type: %s' % (webdriver_type))
+        self._webdriver.get('about:blank')
+        funcname = self._extract_n_function_name(jscode)
+        alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        dummyfunc = ''.join(random.choice(alphabet) for _ in range(8))
+        f = ('return ((e) => {{'
+             'const d = decodeURIComponent(e);'
+             'const p = d.lastIndexOf("}}");'
+             'const th = d.substring(0, p);'
+             'const bh = d.substring(p);'
+             'const m = "var {0};" + th + ";{0} = {1};" + bh;'
+             'const s = document.createElement("script");'
+             's.innerHTML = m;'
+             'document.body.append(s);'
+             'return {0}("{2}");'
+             '}})("{3}");').format(dummyfunc, funcname, n_param, compat_urllib_quote(jscode))
+        n = self._webdriver.execute_script(f)
+        return n
+
     def _n_descramble(self, n_param, player_url, video_id):
         """Compute the response to YT's "n" parameter challenge,
            or None
@@ -1674,14 +1733,19 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             return self._player_cache[sig_id]
 
         try:
-            player_id = ('nsig', player_url)
-            if player_id not in self._player_cache:
-                self._player_cache[player_id] = self._extract_n_function(video_id, player_url)
-            func = self._player_cache[player_id]
-            ret = func(n_param)
-            if ret.startswith('enhanced_except_'):
-                raise ExtractorError('Unhandled exception in decode')
-            self._player_cache[sig_id] = ret
+            webdriver_type = self._downloader.params.get('webdriver', None)
+            if webdriver_type is not None:
+                jscode = self._get_player_code(video_id, player_url)
+                self._player_cache[sig_id] = self._call_n_function_with_webdriver(webdriver_type, jscode, n_param)
+            else:
+                player_id = ('nsig', player_url)
+                if player_id not in self._player_cache:
+                    self._player_cache[player_id] = self._extract_n_function(video_id, player_url)
+                func = self._player_cache[player_id]
+                ret = func(n_param)
+                if ret.startswith('enhanced_except_'):
+                    raise ExtractorError('Unhandled exception in decode')
+                self._player_cache[sig_id] = ret
             if self._downloader.params.get('verbose', False):
                 self._downloader.to_screen('[debug] [%s] %s' % (self.IE_NAME, 'Decrypted nsig {0} => {1}'.format(n_param, self._player_cache[sig_id])))
             return self._player_cache[sig_id]

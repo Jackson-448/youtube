@@ -26,6 +26,7 @@ from ..compat import (
 from ..jsinterp import JSInterpreter
 from ..utils import (
     ExtractorError,
+    check_executable,
     clean_html,
     dict_get,
     error_to_compat_str,
@@ -1467,11 +1468,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         super(YoutubeIE, self).__init__(*args, **kwargs)
         self._code_cache = {}
         self._player_cache = {}
-        self._webdriver = None
-
-    def __del__(self):
-        if self._webdriver is not None:
-            self._webdriver.quit()
+        self._webdriver_wrapper = None
 
     def _signature_cache_id(self, example_sig):
         """ Return a string representation of a signature """
@@ -1666,40 +1663,9 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         return lambda s: jsi.extract_function_from_code(*func_code)([s])
 
     def _call_n_function_with_webdriver(self, webdriver_type, jscode, n_param):
-        if self._webdriver is None:
-            wd = importlib.import_module('selenium.webdriver')
-            if webdriver_type == 'firefox':  # geckodriver
-                o = wd.FirefoxOptions()
-                o.headless = True
-                s = wd.firefox.service.Service(log_path=os.path.devnull)
-                self._webdriver = wd.Firefox(options=o, service=s)
-            elif webdriver_type == 'chrome':  # chromedriver
-                o = wd.ChromeOptions()
-                o.headless = True
-                """
-                If you are using the snap version of the chromium, chromedriver is included in the snap package.
-                You should use that driver.
-                $ cd /snap/bin && sudo ln -s -T chromium.chromedriver chromedriver
-                or
-                s = wd.chrome.service.Service(executable_path='chromium.chromedriver')
-                self._webdriver = wd.Chrome(options=o, service=s)
-                """
-                self._webdriver = wd.Chrome(options=o)
-            elif webdriver_type == 'edge':  # msedgedriver
-                o = wd.EdgeOptions()
-                o.headless = True
-                self._webdriver = wd.Edge(options=o)
-            elif webdriver_type == 'safari':  # safaridriver
-                """
-                safaridriver does not have headless-mode. :(
-                But macOS includes safaridriver by default.
-                To enable automation on safaridriver, run the following command once from the admin terminal.
-                # safaridriver --enable
-                """
-                self._webdriver = wd.Safari()
-            else:
-                raise ExtractorError('unsupported webdriver type: %s' % (webdriver_type))
-        self._webdriver.get('about:blank')
+        if self._webdriver_wrapper is None:
+            self._webdriver_wrapper = WebDriverJSWrapper(webdriver_type)
+        self._webdriver_wrapper.get('about:blank')
         funcname = self._extract_n_function_name(jscode)
         alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
         dummyfunc = ''.join(random.choice(alphabet) for _ in range(8))
@@ -1714,7 +1680,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
              'document.body.append(s);'
              'return {0}("{2}");'
              '}})("{3}");').format(dummyfunc, funcname, n_param, compat_urllib_quote(jscode))
-        n = self._webdriver.execute_script(f)
+        n = self._webdriver_wrapper.executeJS(f)
         return n
 
     def _n_descramble(self, n_param, player_url, video_id):
@@ -3769,3 +3735,75 @@ class YoutubeTruncatedIDIE(InfoExtractor):
         raise ExtractorError(
             'Incomplete YouTube ID %s. URL %s looks truncated.' % (video_id, url),
             expected=True)
+
+
+class WebDriverJSWrapper(object):
+    """WebDriver Wrapper class"""
+
+    def __init__(self, webdriver_type, pageload_timeout=10, script_timeout=5):
+        self._webdriver = None
+        try:
+            wd = importlib.import_module('selenium.webdriver')
+        except ImportError as e:
+            self._raise_exception('Failed to import module "selenium.webdriver"', cause=e)
+
+        if webdriver_type == 'firefox':  # geckodriver
+            if not check_executable('geckodriver', ['--version']):
+                self._raise_exception('geckodriver not found in PATH')
+            o = wd.FirefoxOptions()
+            o.headless = True
+            s = wd.firefox.service.Service(log_path=os.path.devnull)
+            self._webdriver = wd.Firefox(options=o, service=s)
+        elif webdriver_type == 'chrome':  # chromedriver
+            if not check_executable('chromedriver', ['--version']):
+                self._raise_exception('chromedriver not found in PATH')
+            o = wd.ChromeOptions()
+            o.headless = True
+            """
+            If you are using the snap version of the chromium, chromedriver is included in the snap package.
+            You should use that driver.
+            $ cd /snap/bin && sudo ln -s -T chromium.chromedriver chromedriver
+            or
+            s = wd.chrome.service.Service(executable_path='chromium.chromedriver')
+            self._webdriver = wd.Chrome(options=o, service=s)
+            """
+            self._webdriver = wd.Chrome(options=o)
+        elif webdriver_type == 'edge':  # msedgedriver
+            if not check_executable('msedgedriver', ['--version']):
+                self._raise_exception('msedgedriver not found in PATH')
+            o = wd.EdgeOptions()
+            o.headless = True
+            self._webdriver = wd.Edge(options=o)
+        elif webdriver_type == 'safari':  # safaridriver
+            if not check_executable('safaridriver', ['--version']):
+                self._raise_exception('safaridriver not found in PATH')
+            """
+            safaridriver does not have headless-mode. :(
+            But macOS includes safaridriver by default.
+            To enable automation on safaridriver, run the following command once from the admin terminal.
+            # safaridriver --enable
+            """
+            self._webdriver = wd.Safari()
+        else:
+            self._raise_exception('unsupported type: %s' % (webdriver_type))
+        self._webdriver.set_page_load_timeout(pageload_timeout)
+        self._webdriver.set_script_timeout(script_timeout)
+
+    def __del__(self):
+        if self._webdriver is not None:
+            self._webdriver.quit()
+
+    def _raise_exception(self, msg, cause=None):
+        raise ExtractorError('[WebDriverJSWrapper] %s' % (msg), cause=cause)
+
+    def get(self, url):
+        """Loads a web page in the current browser session"""
+        self._webdriver.get(url)
+
+    def executeJS(self, jscode):
+        """Execute JS and return value"""
+        try:
+            ret = self._webdriver.execute_script(jscode)
+        except Exception as e:
+            self._raise_exception('Failed to execute JS', cause=e)
+        return ret

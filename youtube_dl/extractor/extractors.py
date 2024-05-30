@@ -1086,6 +1086,10 @@ from .rutube import (
     RutubePersonIE,
     RutubePlaylistIE,
 )
+from .glomex import (
+    GlomexIE,
+    GlomexEmbedIE,
+)
 from .rutv import RUTVIE
 from .ruutu import RuutuIE
 from .ruv import RuvIE

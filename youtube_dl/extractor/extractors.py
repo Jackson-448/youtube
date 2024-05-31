@@ -413,8 +413,6 @@ from .foxnews import (
     FoxNewsArticleIE,
 )
 from .foxsports import FoxSportsIE
-from .franceculture import FranceCultureIE
-from .franceinter import FranceInterIE
 from .francetv import (
     FranceTVIE,
     FranceTVSiteIE,
@@ -1019,7 +1017,11 @@ from .radiocanada import (
 from .radiode import RadioDeIE
 from .radiojavan import RadioJavanIE
 from .radiobremen import RadioBremenIE
-from .radiofrance import RadioFranceIE
+from .radiofrance import (
+    RadioFrancePodcastEpisodeIE,
+    RadioFrancePodcastPlaylistIE,
+    RadioFranceWebradioIE,
+)
 from .rai import (
     RaiPlayIE,
     RaiPlayLiveIE,

@@ -1325,6 +1325,7 @@ from .toggle import (
 )
 from .tonline import TOnlineIE
 from .toongoggles import ToonGogglesIE
+from .totalwebcasting import TotalWebCastingIE
 from .toutv import TouTvIE
 from .toypics import ToypicsUserIE, ToypicsIE
 from .traileraddict import TrailerAddictIE

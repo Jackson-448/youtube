@@ -898,21 +898,12 @@ from .ooyala import (
 )
 from .ora import OraTVIE
 from .orf import (
-    ORFTVthekIE,
-    ORFFM4IE,
+    ORFONIE,
+    ORFONLiveIE,
     ORFFM4StoryIE,
-    ORFOE1IE,
-    ORFOE3IE,
-    ORFNOEIE,
-    ORFWIEIE,
-    ORFBGLIE,
-    ORFOOEIE,
-    ORFSTMIE,
-    ORFKTNIE,
-    ORFSBGIE,
-    ORFTIRIE,
-    ORFVBGIE,
     ORFIPTVIE,
+    ORFRadioIE,
+    ORFRadioCollectionIE,
 )
 from .outsidetv import OutsideTVIE
 from .packtpub import (
